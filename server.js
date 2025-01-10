@@ -9,7 +9,7 @@ app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "https://chat-app-adarsh.vercel.app/", // Replace with your frontend URL
+        origin: "https://chat-app-adarsh.vercel.app", 
         methods: ["GET", "POST"],
     },
 });

@@ -1,115 +1,111 @@
+// server.js
+
+
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const mongoose = require("mongoose");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+
+mongoose
+    .connect("mongodb://127.0.0.1:27017/chatApp", { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log("Connected to MongoDB"))
+    .catch((err) => console.error("MongoDB connection error:", err));
 
 const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: "https://chat-app-adarsh.vercel.app", 
-        methods: ["GET", "POST"],
-    },
+    cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
-let typingUsers = new Set();
+app.use(cors());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    profilePicture: { type: String },
+    chats: [{ type: mongoose.Schema.Types.Mixed }],
+});
+
+const User = mongoose.model("User", userSchema);
+
+const authenticateToken = (req, res, next) => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).send("Access Denied");
+    jwt.verify(token, "SECRET_KEY", (err, user) => {
+        if (err) return res.status(403).send("Invalid Token");
+        req.user = user;
+        next();
+    });
+};
+
+app.post("/signup", async (req, res) => {
+    const { username, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    try {
+        const user = new User({ username, password: hashedPassword });
+        await user.save();
+        res.status(201).send("User registered successfully");
+    } catch (err) {
+        res.status(400).send("Error registering user");
+    }
+});
+
+app.post("/login", async (req, res) => {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).send("User not found");
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) return res.status(400).send("Invalid credentials");
+    const token = jwt.sign({ username, profilePicture: user.profilePicture }, "SECRET_KEY", { expiresIn: "1h" });
+    res.json({ token });
+});
+
+app.get("/users", authenticateToken, async (req, res) => {
+    const users = await User.find({}, "username profilePicture");
+    res.json(users);
+});
+
+app.get("/chats/:username", authenticateToken, async (req, res) => {
+    const user = await User.findOne({ username: req.params.username });
+    if (!user) return res.status(404).send("User not found");
+    res.json(user.chats || []);
+});
 
 io.on("connection", (socket) => {
-    console.log("A user connected:", socket.id);
+    console.log("A user connected");
 
-    
-    socket.on("set_username", (data) => {
-        socket.username = data.username;
-        socket.profilePicture = data.profilePicture;
-        console.log(`User set their username: ${data.username}`);
+    socket.on("join_room", (username) => {
+        socket.join(username);
+        console.log(`${username} joined their room`);
     });
 
-    
-    socket.on("send_message", (data) => {
-        const messageData = {
-            username: data.username,
-            profilePicture: data.profilePicture,
-            message: data.message,
-            timestamp: data.timestamp,
-        };
-        io.emit("receive_message", messageData);
-    });
+    socket.on("send_message", async (data) => {
+        const { sender, receiver, message, timestamp } = data;
+        const chatMessage = { sender, message, timestamp };
 
+        try {
+            // Store the message in the receiver's chat
+            await User.updateOne({ username: receiver }, { $push: { chats: chatMessage } });
 
-    socket.on("user_typing", (data) => {
-        if (data.isTyping) {
-            typingUsers.add(data.username);
-        } else {
-            typingUsers.delete(data.username);
+            // Emit the message only to the receiver's room
+            io.to(receiver).emit("receive_message", chatMessage);
+        } catch (err) {
+            console.error("Error saving chat:", err);
         }
-
-        io.emit("user_typing", { username: data.username, isTyping: data.isTyping });
     });
 
     socket.on("disconnect", () => {
-        console.log("A user disconnected:", socket.id);
-        typingUsers.delete(socket.username);
+        console.log("A user disconnected");
     });
 });
 
-server.listen(5000, () => {
-    console.log("Server is running on port 5000");
-});
+server.listen(5000, () => console.log("Server is running on port 5000"));
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-/*const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-
-const app = express();
-const server = http.createServer(app);
-
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ['GET', 'POST'],
-    },
-});
-
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-    socket.on('set_username', (username) => {
-        socket.username = username;
-    });
-    socket.on('send_message', (message) => {
-        
-        io.emit('receive_message', { username: socket.username, message});
-    });
-
-    socket.on('disconnect', () => {
-        console.log('A user disconnected:', socket.id);
-    });
-   
-    
-});
-app.get('/', (req, res) => {
-    res.send('Backend is running!');
-});
-
-
-
-
-const PORT = 5000;
-server.listen(PORT, "0.0.0.0",() => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});*/

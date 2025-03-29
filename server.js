@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -6,47 +7,17 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-mongoose
-    .connect("mongodb://127.0.0.1:27017/chatApp", { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log("Connected to MongoDB"))
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("Connected to MongoDB Atlas"))
     .catch((err) => console.error("MongoDB connection error:", err));
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// ✅ CORS configuration
-const corsOptions = {
-    origin: "https://chat-app-adarsh.vercel.app", // ✅ your frontend origin
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-};
-
-// ✅ Apply CORS middleware
-app.use(cors(corsOptions));
-
-// ✅ Handle preflight (OPTIONS) requests
-app.options("*", cors(corsOptions));
-
-// ✅ Extra manual headers in case Railway strips headers
-app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "https://chat-app-adarsh.vercel.app");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    next();
-});
-
+app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-const io = new Server(server, {
-    cors: {
-        origin: "https://chat-app-adarsh.vercel.app",
-        methods: ["GET", "POST"],
-        credentials: true,
-    },
-});
 
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
@@ -60,7 +31,7 @@ const User = mongoose.model("User", userSchema);
 const authenticateToken = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).send("Access Denied");
-    jwt.verify(token, "SECRET_KEY", (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) return res.status(403).send("Invalid Token");
         req.user = user;
         next();
@@ -68,25 +39,37 @@ const authenticateToken = (req, res, next) => {
 };
 
 app.post("/signup", async (req, res) => {
-    const { username, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
     try {
+        const { username, password } = req.body;
+        if (!username || !password) return res.status(400).send("Username and password are required");
+
+        const existingUser = await User.findOne({ username });
+        if (existingUser) return res.status(400).send("Username already exists");
+
+        const hashedPassword = await bcrypt.hash(password, 10);
         const user = new User({ username, password: hashedPassword });
         await user.save();
+
         res.status(201).send("User registered successfully");
     } catch (err) {
-        res.status(400).send("Error registering user");
+        res.status(500).send("Error registering user");
     }
 });
 
 app.post("/login", async (req, res) => {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user) return res.status(400).send("User not found");
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) return res.status(400).send("Invalid credentials");
-    const token = jwt.sign({ username, profilePicture: user.profilePicture }, "SECRET_KEY", { expiresIn: "1h" });
-    res.json({ token });
+    try {
+        const { username, password } = req.body;
+        const user = await User.findOne({ username });
+        if (!user) return res.status(400).send("User not found");
+
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) return res.status(400).send("Invalid credentials");
+
+        const token = jwt.sign({ username, profilePicture: user.profilePicture }, process.env.JWT_SECRET, { expiresIn: "1h" });
+        res.json({ token });
+    } catch (err) {
+        res.status(500).send("Login error");
+    }
 });
 
 app.get("/users", authenticateToken, async (req, res) => {
@@ -114,6 +97,8 @@ io.on("connection", (socket) => {
 
         try {
             await User.updateOne({ username: receiver }, { $push: { chats: chatMessage } });
+            await User.updateOne({ username: sender }, { $push: { chats: chatMessage } });
+
             io.to(receiver).emit("receive_message", chatMessage);
         } catch (err) {
             console.error("Error saving chat:", err);
@@ -129,7 +114,10 @@ server.listen(5000, () => console.log("Server is running on port 5000"));
 
 
 
-/*const express = require("express");
+
+/*require("dotenv").config();
+
+const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
@@ -137,10 +125,15 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-mongoose
-    .connect("mongodb://127.0.0.1:27017/chatApp", { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log("Connected to MongoDB"))
-    .catch((err) => console.error("MongoDB connection error:", err));
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  
+
+.then(() => console.log("Connected to MongoDB Atlas"))
+.catch((err) => console.error("MongoDB connection error:", err));
+
 
 const app = express();
 const server = http.createServer(app);
@@ -232,8 +225,4 @@ io.on("connection", (socket) => {
     });
 });
 
-server.listen(5000, () => console.log("Server is running on port 5000"));
-*/
-
-
-
+server.listen(5000, () => console.log("Server is running on port 5000"));*/

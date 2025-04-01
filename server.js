@@ -29,7 +29,7 @@ app.use(limiter);
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'https://chat-app-adarsh.vercel.app/',
+  origin: process.env.FRONTEND_URL || 'https://chat-app-adarsh.vercel.app',
   methods: ['GET', 'POST', 'PUT', 'DELETE']
 };
 const io = new Server(server, { 
